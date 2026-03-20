@@ -3,9 +3,62 @@ import api from '../../../services/api';
 import toast from 'react-hot-toast';
 import { X, Save, Plus, Trash, Edit2, AlertTriangle, Loader2, QrCode } from 'lucide-react';
 
+const TERMS_TTL_MS = 5 * 60 * 1000;
+let termsCache = null;
+let termsCacheAt = 0;
+let termsInFlight = null;
+
+const loadWooTerms = async () => {
+  const now = Date.now();
+  if (termsCache && now - termsCacheAt < TERMS_TTL_MS) {
+    return termsCache;
+  }
+  if (termsInFlight) {
+    return termsInFlight;
+  }
+
+  termsInFlight = (async () => {
+    try {
+      try {
+        const { data } = await api.get('/inventory/attributes/terms', {
+          params: { slugs: 'talla,color,diseno' }
+        });
+        if (data?.success) {
+          return {
+            talla: data.data?.talla || [],
+            color: data.data?.color || [],
+            diseno: data.data?.diseno || []
+          };
+        }
+      } catch {}
+
+      const [sizesRes, colorsRes, designsRes] = await Promise.all([
+        api.get('/inventory/attributes/talla/terms'),
+        api.get('/inventory/attributes/color/terms'),
+        api.get('/inventory/attributes/diseno/terms')
+      ]);
+
+      const normalize = (res) => (res?.data?.success ? res.data.data || [] : []);
+      return {
+        talla: normalize(sizesRes),
+        color: normalize(colorsRes),
+        diseno: normalize(designsRes)
+      };
+    } finally {
+      termsInFlight = null;
+    }
+  })();
+
+  const result = await termsInFlight;
+  termsCache = result;
+  termsCacheAt = Date.now();
+  return result;
+};
+
 const VariationsModal = ({ isOpen, onClose, product }) => {
   const [variations, setVariations] = useState([]);
-  const [loading, setLoading] = useState(false);
+  const [variationsLoading, setVariationsLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [sizeTerms, setSizeTerms] = useState([]);
   const [colorTerms, setColorTerms] = useState([]);
   const [designTerms, setDesignTerms] = useState([]);
@@ -23,38 +76,38 @@ const VariationsModal = ({ isOpen, onClose, product }) => {
   useEffect(() => {
     if (isOpen && product) {
       fetchVariations();
-      // Fetch Woo attribute terms for selects
-      const fetchTerms = async () => {
-        try {
-          setTermsLoading(true);
-          const [sizesRes, colorsRes, designsRes] = await Promise.all([
-            api.get('/inventory/attributes/talla/terms'),
-            api.get('/inventory/attributes/color/terms'),
-            api.get('/inventory/attributes/diseno/terms')
-          ]);
-          if (sizesRes.data?.success) setSizeTerms(sizesRes.data.data || []);
-          if (colorsRes.data?.success) setColorTerms(colorsRes.data.data || []);
-          if (designsRes.data?.success) setDesignTerms(designsRes.data.data || []);
-        } catch {
-          // Silent: if fails, keep text inputs fallback (we use selects anyway)
-        } finally {
-          setTermsLoading(false);
-        }
-      };
-      fetchTerms();
+      if (termsCache && Date.now() - termsCacheAt < TERMS_TTL_MS) {
+        setSizeTerms(termsCache.talla || []);
+        setColorTerms(termsCache.color || []);
+        setDesignTerms(termsCache.diseno || []);
+      } else {
+        const fetchTerms = async () => {
+          try {
+            setTermsLoading(true);
+            const loaded = await loadWooTerms();
+            setSizeTerms(loaded.talla || []);
+            setColorTerms(loaded.color || []);
+            setDesignTerms(loaded.diseno || []);
+          } catch {}
+          finally {
+            setTermsLoading(false);
+          }
+        };
+        fetchTerms();
+      }
     }
   }, [isOpen, product]);
 
   const fetchVariations = async () => {
     try {
-      setLoading(true);
+      setVariationsLoading(true);
       const { data } = await api.get(`/inventory/products/${product.id}/variations`);
       setVariations(data);
     } catch (error) {
       console.error(error);
       toast.error('Error al cargar variaciones');
     } finally {
-      setLoading(false);
+      setVariationsLoading(false);
     }
   };
 
@@ -65,19 +118,19 @@ const VariationsModal = ({ isOpen, onClose, product }) => {
     }
 
     try {
-      setLoading(true);
+      setSaving(true);
       await api.post(`/inventory/products/${product.id}/variations`, {
         ...newVariation,
         detail: newVariation.design
       });
       toast.success('Variación agregada');
       setNewVariation({ size: '', price: '', color: '', design: '', stock: 0 });
-      fetchVariations();
+      await fetchVariations();
     } catch (error) {
       console.error(error);
       toast.error('Error al agregar variación');
     } finally {
-      setLoading(false);
+      setSaving(false);
     }
   };
 
@@ -90,37 +143,37 @@ const VariationsModal = ({ isOpen, onClose, product }) => {
     if (!id) return;
 
     try {
-      setLoading(true);
+      setSaving(true);
       await api.delete(`/inventory/variations/${id}`);
       toast.success('Variación eliminada');
-      fetchVariations();
+      await fetchVariations();
       setDeleteConfirm({ isOpen: false, id: null });
     } catch (error) {
       console.error(error);
       toast.error('Error al eliminar variación');
     } finally {
-      setLoading(false);
+      setSaving(false);
     }
   };
 
   const handleUpdate = async (id, updatedData) => {
     try {
-      setLoading(true);
+      setSaving(true);
       await api.put(`/inventory/variations/${id}`, updatedData);
       toast.success('Variación actualizada');
       setEditingId(null);
-      fetchVariations();
+      await fetchVariations();
     } catch (error) {
       console.error(error);
       toast.error('Error al actualizar variación');
     } finally {
-      setLoading(false);
+      setSaving(false);
     }
   };
 
   if (!isOpen) return null;
 
-  const formDisabled = loading || termsLoading;
+  const formDisabled = saving || variationsLoading;
   const handlePrintLabel = (variationId) => {
     const url = `${window.location.origin}/labels/variation/${variationId}`;
     window.open(url, '_blank', 'noopener,noreferrer');
@@ -146,17 +199,15 @@ const VariationsModal = ({ isOpen, onClose, product }) => {
           
           {/* Add New Form */}
           <div className="bg-slate-50 p-4 rounded-xl mb-6 border border-slate-200 relative">
-            {termsLoading && (
-              <div className="absolute inset-0 bg-white/70 z-10 flex items-center justify-center rounded-xl">
-                <div className="flex items-center gap-2 text-sm text-slate-600">
-                  <Loader2 className="animate-spin" size={18} />
-                  Cargando tallas, colores y diseños...
-                </div>
-              </div>
-            )}
             <h3 className="font-semibold text-slate-700 mb-3 flex items-center gap-2">
               <Plus size={18} /> Nueva Variación
             </h3>
+            {termsLoading && (
+              <div className="mb-3 flex items-center gap-2 text-xs text-slate-500">
+                <Loader2 className="animate-spin" size={14} />
+                Cargando tallas, colores y diseños...
+              </div>
+            )}
             <div className="grid grid-cols-1 sm:grid-cols-6 gap-3 items-end">
               <div>
                 <label className="text-xs font-medium text-slate-500 mb-1 block">Talla</label>
@@ -262,22 +313,20 @@ const VariationsModal = ({ isOpen, onClose, product }) => {
                 disabled={formDisabled}
                 className={`bg-indigo-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-indigo-700 transition-colors flex items-center justify-center gap-2 ${(formDisabled) ? 'opacity-70 cursor-not-allowed' : ''}`}
               >
-                {termsLoading
-                  ? (<><Loader2 className="animate-spin" size={16} /> Cargando...</>)
-                  : loading
-                    ? (<><Loader2 className="animate-spin" size={16} /> Guardando...</>)
-                    : (<><Plus size={16} /> Agregar</>)}
+                {saving
+                  ? (<><Loader2 className="animate-spin" size={16} /> Guardando...</>)
+                  : (<><Plus size={16} /> Agregar</>)}
               </button>
             </div>
           </div>
 
           {/* List */}
           <div className="overflow-x-auto relative">
-            {formDisabled && (
+            {(saving || variationsLoading) && (
               <div className="absolute inset-0 bg-white/70 z-10 flex items-center justify-center rounded-xl">
                 <div className="flex items-center gap-2 text-sm text-slate-600">
                   <Loader2 className="animate-spin" size={18} />
-                  Cargando variaciones...
+                  {variationsLoading ? 'Cargando variaciones...' : 'Guardando...'}
                 </div>
               </div>
             )}

@@ -288,7 +288,20 @@ class InventoryController
     public function getVariations($productId)
     {
         try {
-            $stmt = $this->conn->prepare("SELECT * FROM product_variations WHERE product_id = ? ORDER BY id ASC");
+            $stmt = $this->conn->prepare("
+                SELECT
+                    id,
+                    product_id,
+                    sku,
+                    size,
+                    color,
+                    detail,
+                    price,
+                    stock
+                FROM product_variations
+                WHERE product_id = ?
+                ORDER BY id ASC
+            ");
             $stmt->execute([$productId]);
             $variations = $stmt->fetchAll(PDO::FETCH_ASSOC);
             Response::json($variations);
@@ -580,6 +593,58 @@ class InventoryController
                 ];
             }, $res['data'] ?? []);
             Response::json(['success' => true, 'data' => $terms]);
+        } catch (\Exception $e) {
+            Response::error($e->getMessage());
+        }
+    }
+
+    public function getWooAttributesTermsBatch()
+    {
+        try {
+            $woo = new WooCommerceService();
+            if (!$woo->isEnabled()) {
+                Response::json(['success' => false, 'data' => []]);
+                return;
+            }
+
+            $raw = $_GET['slugs'] ?? '';
+            $slugs = array_values(array_filter(array_map(function ($s) {
+                return strtolower(trim($s));
+            }, explode(',', (string)$raw))));
+            if (empty($slugs)) {
+                $slugs = ['talla', 'color', 'diseno'];
+            }
+
+            $data = [];
+            $errors = [];
+
+            foreach ($slugs as $slug) {
+                $attrId = $woo->getAttributeIdBySlugOrName($slug);
+                if (!$attrId) {
+                    $data[$slug] = [];
+                    continue;
+                }
+                $res = $woo->getAttributeTerms($attrId);
+                if (!$res['success']) {
+                    $data[$slug] = [];
+                    $errors[$slug] = $res['message'] ?? 'Error';
+                    continue;
+                }
+                $terms = array_map(function ($t) {
+                    return [
+                        'id' => $t['id'],
+                        'name' => $t['name'],
+                        'slug' => $t['slug']
+                    ];
+                }, $res['data'] ?? []);
+                $data[$slug] = $terms;
+            }
+
+            $payload = ['success' => true, 'data' => $data];
+            if (!empty($errors)) {
+                $payload['errors'] = $errors;
+            }
+            Response::json($payload);
         } catch (\Exception $e) {
             Response::error($e->getMessage());
         }

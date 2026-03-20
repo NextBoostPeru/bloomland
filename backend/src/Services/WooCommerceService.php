@@ -8,6 +8,7 @@ class WooCommerceService
 {
     private $conn;
     private $settings;
+    private $productAttributesCache = null;
 
     public function __construct()
     {
@@ -1789,6 +1790,25 @@ class WooCommerceService
     }
 
     // --- Generic Attribute Helpers for Talla/Color ---
+    private function getProductAttributes()
+    {
+        if (!$this->isEnabled()) {
+            return null;
+        }
+        if ($this->productAttributesCache !== null) {
+            return $this->productAttributesCache;
+        }
+
+        $endpoint = rtrim($this->settings['woocommerce_url'], '/') . '/wp-json/wc/v3/products/attributes';
+        $result = $this->makeRequest('GET', $endpoint);
+        if (!$result['success']) {
+            $this->productAttributesCache = [];
+            return $this->productAttributesCache;
+        }
+        $this->productAttributesCache = $result['data'] ?? [];
+        return $this->productAttributesCache;
+    }
+
     public function getAttributeIdBySlugOrName($key)
     {
         if (!$this->isEnabled()) {
@@ -1811,11 +1831,10 @@ class WooCommerceService
             $nameCandidates = [$key, ucfirst($k)];
         }
 
-        $endpoint = rtrim($this->settings['woocommerce_url'], '/') . '/wp-json/wc/v3/products/attributes';
-        $result = $this->makeRequest('GET', $endpoint);
-        if (!$result['success']) return null;
+        $attrs = $this->getProductAttributes();
+        if (empty($attrs)) return null;
 
-        foreach ($result['data'] as $attr) {
+        foreach ($attrs as $attr) {
             $slug = strtolower($attr['slug'] ?? '');
             $name = strtolower($attr['name'] ?? '');
             if (in_array($slug, array_map('strtolower', $slugCandidates), true) ||

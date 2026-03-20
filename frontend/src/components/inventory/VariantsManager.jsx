@@ -21,17 +21,27 @@ const VariantsManager = () => {
     try {
       if (loading || saving) return;
       setLoading(true);
+      try {
+        const { data } = await api.get('/inventory/attributes/terms', {
+          params: { slugs: 'talla,color,diseno' }
+        });
+        if (data?.success) {
+          setTerms({
+            talla: data.data?.talla || [],
+            color: data.data?.color || [],
+            diseno: data.data?.diseno || []
+          });
+          return;
+        }
+      } catch {}
+
       const [tRes, cRes, dRes] = await Promise.all([
         api.get('/inventory/attributes/talla/terms'),
         api.get('/inventory/attributes/color/terms'),
         api.get('/inventory/attributes/diseno/terms')
       ]);
       const normalize = (res) => (res?.data?.success ? res.data.data || [] : []);
-      setTerms({
-        talla: normalize(tRes),
-        color: normalize(cRes),
-        diseno: normalize(dRes)
-      });
+      setTerms({ talla: normalize(tRes), color: normalize(cRes), diseno: normalize(dRes) });
     } catch (error) {
       console.error(error);
       toast.error('Error al cargar variantes desde WooCommerce');

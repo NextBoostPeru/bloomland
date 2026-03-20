@@ -219,6 +219,7 @@ $router->add('GET', '/inventory/variations/{id}', [InventoryController::class, '
 $router->add('POST', '/inventory/products/{id}/variations', [InventoryController::class, 'addVariation'], [[AuthMiddleware::class, 'authenticate']]);
 $router->add('PUT', '/inventory/variations/{id}', [InventoryController::class, 'updateVariation'], [[AuthMiddleware::class, 'authenticate']]);
 $router->add('DELETE', '/inventory/variations/{id}', [InventoryController::class, 'deleteVariation'], [[AuthMiddleware::class, 'authenticate']]);
+$router->add('GET', '/inventory/attributes/terms', [InventoryController::class, 'getWooAttributesTermsBatch'], [[AuthMiddleware::class, 'authenticate']]);
 $router->add('GET', '/inventory/attributes/{slug}/terms', [InventoryController::class, 'getWooAttributeTerms'], [[AuthMiddleware::class, 'authenticate']]);
 $router->add('POST', '/inventory/attributes/{slug}/terms', [InventoryController::class, 'createWooAttributeTerm'], [[AuthMiddleware::class, 'authenticate']]);
 $router->add('PUT', '/inventory/attributes/{slug}/terms/{id}', [InventoryController::class, 'updateWooAttributeTerm'], [[AuthMiddleware::class, 'authenticate']]);
